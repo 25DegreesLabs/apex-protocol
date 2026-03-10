@@ -24,7 +24,7 @@ export { db }
 // ─── Default settings ─────────────────────────────────────────────────────────
 const DEFAULTS = {
     currentPhase: 1,
-    webhookUrl: ''
+    webhookUrl: 'https://script.google.com/macros/s/AKfycbxFvHnbZqSjIgQg-_81zk3-HbVwYx3nhsA5lUOo3rOHlKCqiKhYfhi2s2QsioYwuJL7/exec'
 }
 
 async function getSetting(key) {
