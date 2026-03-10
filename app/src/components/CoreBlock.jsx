@@ -2,12 +2,12 @@ export default function CoreBlock({ sets, onSetChange }) {
     // 3 flexible rows
     return (
         <div className="card">
-            <div className="section-header">⚙️ Core & Accessories (Optional)</div>
+            <div className="section-header amber">⚙️ Core & Accessories (Optional)</div>
             <div style={{ padding: '0 14px 12px 14px', fontSize: '0.85rem', color: 'var(--dim)', fontStyle: 'italic' }}>
                 If you have time, log your core or accessory work here. Does not affect Completeness %.
             </div>
 
-            <div className="str-set-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(100px, 2fr) 60px 60px', gap: 8, padding: '0 14px 8px 14px' }}>
+            <div className="str-set-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(100px, 2fr) 60px 60px', gap: 8, padding: '16px 14px 8px 14px' }}>
                 <span>Exercise</span>
                 <span>Sets</span>
                 <span>Reps</span>
