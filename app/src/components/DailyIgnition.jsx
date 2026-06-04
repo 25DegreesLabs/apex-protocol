@@ -9,6 +9,14 @@ export default function DailyIgnition() {
     const timeoutRef = useRef(null)
 
     useEffect(() => {
+        // Prevent Daily Ignition in browser tabs to ensure native PWA install UI is not blocked
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+        
+        if (!isStandalone) {
+            setIgnitionHasShown(true);
+            return;
+        }
+
         if (!dailyIgnitionEnabled || ignitionHasShown) return;
         
         // Pick random quote
