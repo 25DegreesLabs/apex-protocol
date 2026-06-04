@@ -5,10 +5,14 @@
  *   sessions   — logged workout sessions (source of truth, local)
  *   syncQueue  — sessions pending push to Google Sheets webhook
  *   settings   — app config (currentPhase, webhookUrl)
+ *
+ * In-memory shared state (not persisted to Dexie):
+ *   activeWorkout — current HUD session inputs (survives tab switches)
+ *   timerState    — stopwatch + countdown state (survives tab switches)
  */
 
 import Dexie from 'dexie'
-import { useState, useEffect, useCallback, createContext, useContext } from 'react'
+import { useState, useEffect, useRef, useCallback, createContext, useContext } from 'react'
 
 // ─── Database definition ──────────────────────────────────────────────────────
 const db = new Dexie('FightersOS')
@@ -38,6 +42,24 @@ async function setSetting(key, value) {
     await db.settings.put({ key, value })
 }
 
+// ─── Active workout defaults ───────────────────────────────────────────────────
+const WORKOUT_DEFAULTS = {
+    day: 1,
+    hipScore: 3,
+    mobChecked: {},
+    strSets: {},
+    coreSets: {},
+    clrChecked: {},
+    bagRounds: '',
+    bagCourse: '',
+    bagModules: '',
+    bagWorkouts: '',
+    notes: '',
+    gymSessionType: 'Combat',
+    altRows: [],
+    altDuration: ''
+}
+
 // ─── Context ──────────────────────────────────────────────────────────────────
 const DBContext = createContext(null)
 
@@ -45,6 +67,7 @@ const DBContext = createContext(null)
  * DBProvider — wraps the app and provides DB access via useDB()
  */
 export function DBProvider({ children }) {
+    // ── Persistent DB-backed state ─────────────────────────────────────────────
     const [phase, _setPhase] = useState(1)
     const [appName, _setAppName] = useState(DEFAULTS.appName)
     const [appSubtitle, _setAppSubtitle] = useState(DEFAULTS.appSubtitle)
@@ -52,7 +75,194 @@ export function DBProvider({ children }) {
     const [sessionCount, setCount] = useState({}) // { 1: n, 2: n, 3: n }
     const [ready, setReady] = useState(false)
 
-    // Load settings on mount
+    // ── In-memory active workout state (not persisted to Dexie) ───────────────
+    const [day, setDay] = useState(WORKOUT_DEFAULTS.day)
+    const [hipScore, setHipScore] = useState(WORKOUT_DEFAULTS.hipScore)
+    const [mobChecked, setMobChecked] = useState(WORKOUT_DEFAULTS.mobChecked)
+    const [strSets, setStrSets] = useState(WORKOUT_DEFAULTS.strSets)
+    const [coreSets, setCoreSets] = useState(WORKOUT_DEFAULTS.coreSets)
+    const [clrChecked, setClrChecked] = useState(WORKOUT_DEFAULTS.clrChecked)
+    const [bagRounds, setBagRounds] = useState(WORKOUT_DEFAULTS.bagRounds)
+    const [bagCourse, setBagCourse] = useState(WORKOUT_DEFAULTS.bagCourse)
+    const [bagModules, setBagModules] = useState(WORKOUT_DEFAULTS.bagModules)
+    const [bagWorkouts, setBagWorkouts] = useState(WORKOUT_DEFAULTS.bagWorkouts)
+    const [notes, setNotes] = useState(WORKOUT_DEFAULTS.notes)
+    const [gymSessionType, setGymSessionType] = useState(WORKOUT_DEFAULTS.gymSessionType)
+    const [altRows, setAltRows] = useState(WORKOUT_DEFAULTS.altRows)
+    const [altDuration, setAltDuration] = useState(WORKOUT_DEFAULTS.altDuration)
+
+    // ── In-memory timer state (not persisted to Dexie) ────────────────────────
+    const [swTime, setSwTime] = useState(0)
+    const [swRunning, setSwRunning] = useState(false)
+    const [cdTime, setCdTime] = useState(0)
+    const [cdRunning, setCdRunning] = useState(false)
+    const [isFlashing, setIsFlashing] = useState(false)
+
+    // Refs for intervals and audio — not React state, no serialisation needed
+    const swIntervalRef = useRef(null)
+    const swStartRef = useRef(0)       // timestamp anchor for accurate elapsed ms
+    const cdIntervalRef = useRef(null)
+    const audioRef = useRef(null)
+    const wakeLockRef = useRef(null)
+
+    // ── Preload bell audio once at provider mount ─────────────────────────────
+    useEffect(() => {
+        audioRef.current = new Audio('/bell.mp3')
+    }, [])
+
+    // ── WakeLock helpers ──────────────────────────────────────────────────────
+    const requestWakeLock = useCallback(async () => {
+        try {
+            if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && navigator.wakeLock) {
+                wakeLockRef.current = await navigator.wakeLock.request('screen')
+            }
+        } catch (err) {
+            console.warn('WakeLock rejected or not supported:', err)
+        }
+    }, [])
+
+    const releaseWakeLock = useCallback(() => {
+        if (wakeLockRef.current) {
+            wakeLockRef.current.release().catch(console.warn)
+            wakeLockRef.current = null
+        }
+    }, [])
+
+    // ── Alarm (bell + vibrate + flash) ────────────────────────────────────────
+    const triggerAlarm = useCallback(() => {
+        if (audioRef.current) {
+            audioRef.current.currentTime = 0
+            audioRef.current.play().catch(console.error)
+        }
+        try {
+            if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+                navigator.vibrate([500, 200, 500])
+            }
+        } catch (e) {
+            console.warn('Vibration not supported', e)
+        }
+        setIsFlashing(true)
+        setTimeout(() => setIsFlashing(false), 2000)
+    }, [])
+
+    // ── Stopwatch interval — runs in provider, survives tab unmount ───────────
+    useEffect(() => {
+        if (swRunning) {
+            requestWakeLock()
+            // Re-anchor start time against current swTime so pausing preserves progress
+            swStartRef.current = Date.now() - swTime
+            swIntervalRef.current = setInterval(() => {
+                setSwTime(Date.now() - swStartRef.current)
+            }, 10)
+        } else {
+            clearInterval(swIntervalRef.current)
+            if (!cdRunning) releaseWakeLock()
+        }
+        return () => clearInterval(swIntervalRef.current)
+    }, [swRunning]) // intentionally excludes swTime — anchor is set once on start
+
+    // ── Countdown interval — runs in provider, survives tab unmount ───────────
+    useEffect(() => {
+        if (cdRunning && cdTime > 0) {
+            requestWakeLock()
+            cdIntervalRef.current = setInterval(() => {
+                setCdTime(prev => {
+                    if (prev <= 1) {
+                        setCdRunning(false)
+                        triggerAlarm()
+                        if (!swRunning) releaseWakeLock()
+                        return 0
+                    }
+                    return prev - 1
+                })
+            }, 1000)
+        } else {
+            clearInterval(cdIntervalRef.current)
+            if (!cdRunning && !swRunning) releaseWakeLock()
+        }
+        return () => clearInterval(cdIntervalRef.current)
+    }, [cdRunning, cdTime, triggerAlarm, swRunning])
+
+    // ── Timer actions ─────────────────────────────────────────────────────────
+
+    const toggleStopwatch = useCallback(() => {
+        setSwRunning(prev => !prev)
+    }, [])
+
+    const resetStopwatch = useCallback(() => {
+        setSwRunning(false)
+        setSwTime(0)
+    }, [])
+
+    const startCountdown = useCallback((minutes) => {
+        setCdTime(Math.round(minutes * 60))
+        setCdRunning(true)
+    }, [])
+
+    const toggleCountdown = useCallback(() => {
+        setCdRunning(prev => !prev)
+    }, [])
+
+    const cancelCountdown = useCallback(() => {
+        setCdRunning(false)
+        setCdTime(0)
+    }, [])
+
+    const addCountdownTime = useCallback((seconds) => {
+        setCdTime(prev => prev + seconds)
+    }, [])
+
+    // ── Active workout actions ────────────────────────────────────────────────
+
+    const toggleMobilityCheck = useCallback((slot, val) => {
+        setMobChecked(prev => ({ ...prev, [slot]: val }))
+    }, [])
+
+    const updateStrengthSet = useCallback((key, field, val) => {
+        setStrSets(prev => ({ ...prev, [key]: { ...prev[key], [field]: val } }))
+    }, [])
+
+    const updateCoreSet = useCallback((rowNum, field, val) => {
+        setCoreSets(prev => ({ ...prev, [rowNum]: { ...prev[rowNum], [field]: val } }))
+    }, [])
+
+    const toggleCooldownCheck = useCallback((slot, val) => {
+        setClrChecked(prev => ({ ...prev, [slot]: val }))
+    }, [])
+
+    const addAltRow = useCallback(() => {
+        setAltRows(prev => [...prev, { id: Date.now(), name: '', v1: '', v2: '', v3: '' }])
+    }, [])
+
+    const updateAltRow = useCallback((id, field, value) => {
+        setAltRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r))
+    }, [])
+
+    const removeAltRow = useCallback((id) => {
+        setAltRows(prev => prev.filter(r => r.id !== id))
+    }, [])
+
+    /**
+     * resetActiveWorkout — resets all in-progress HUD inputs to defaults.
+     * Day is intentionally kept (matches existing handleReset behaviour in HUD).
+     */
+    const resetActiveWorkout = useCallback(() => {
+        setHipScore(WORKOUT_DEFAULTS.hipScore)
+        setMobChecked(WORKOUT_DEFAULTS.mobChecked)
+        setStrSets(WORKOUT_DEFAULTS.strSets)
+        setCoreSets(WORKOUT_DEFAULTS.coreSets)
+        setClrChecked(WORKOUT_DEFAULTS.clrChecked)
+        setBagRounds(WORKOUT_DEFAULTS.bagRounds)
+        setBagCourse(WORKOUT_DEFAULTS.bagCourse)
+        setBagModules(WORKOUT_DEFAULTS.bagModules)
+        setBagWorkouts(WORKOUT_DEFAULTS.bagWorkouts)
+        setNotes(WORKOUT_DEFAULTS.notes)
+        setGymSessionType(WORKOUT_DEFAULTS.gymSessionType)
+        setAltRows(WORKOUT_DEFAULTS.altRows)
+        setAltDuration(WORKOUT_DEFAULTS.altDuration)
+    }, [])
+
+    // ── Load settings on mount ────────────────────────────────────────────────
     useEffect(() => {
         async function init() {
             const p = await getSetting('currentPhase')
@@ -106,13 +316,15 @@ export function DBProvider({ children }) {
         await db.syncQueue.add({ sessionId: id, attempts: 0, payload: sessionData })
         await refreshCounts()
         await refreshPending()
+        // Reset in-progress workout state after successful log
+        resetActiveWorkout()
         // Attempt to sync immediately if online
         trySyncQueue(refreshPending)
-    }, [refreshCounts, refreshPending])
+    }, [refreshCounts, refreshPending, resetActiveWorkout])
 
     const resetSession = useCallback(() => {
-        // HUD state reset is handled in HUD.jsx — this is a no-op hook for future use
-    }, [])
+        resetActiveWorkout()
+    }, [resetActiveWorkout])
 
     if (!ready) {
         return (
@@ -127,11 +339,34 @@ export function DBProvider({ children }) {
 
     return (
         <DBContext.Provider value={{
+            // ── DB-backed settings ──
             phase, setPhase,
             appName, setAppName,
             appSubtitle, setAppSubtitle,
             sessionCount, pendingSync, logSession, resetSession,
-            refreshCounts, refreshPending
+            refreshCounts, refreshPending,
+
+            // ── Active workout state ──
+            day, setDay,
+            hipScore, setHipScore,
+            mobChecked, toggleMobilityCheck,
+            strSets, updateStrengthSet,
+            coreSets, updateCoreSet,
+            clrChecked, toggleCooldownCheck,
+            bagRounds, setBagRounds,
+            bagCourse, setBagCourse,
+            bagModules, setBagModules,
+            bagWorkouts, setBagWorkouts,
+            notes, setNotes,
+            gymSessionType, setGymSessionType,
+            altRows, setAltRows, addAltRow, updateAltRow, removeAltRow,
+            altDuration, setAltDuration,
+            resetActiveWorkout,
+
+            // ── Timer state ──
+            swTime, swRunning, toggleStopwatch, resetStopwatch,
+            cdTime, cdRunning, startCountdown, toggleCountdown, cancelCountdown, addCountdownTime,
+            isFlashing
         }}>
             {children}
         </DBContext.Provider>

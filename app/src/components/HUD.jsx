@@ -9,9 +9,13 @@
  *  - Bag Work block
  *  - Cooldown block
  *  - Completeness % + Actions
+ *
+ * Workout session state is now held in DBProvider (db/index.jsx) so it
+ * survives tab switches. HUD remains the controller; all child components
+ * remain presentational and receive props as before.
  */
 
-import { useState, useCallback } from 'react'
+import { useCallback } from 'react'
 import { usePlaybook } from '../hooks/usePlaybook.js'
 import { useDB } from '../db/index.jsx'
 import MobilityBlock from './MobilityBlock.jsx'
@@ -28,27 +32,26 @@ const HIP_LABELS = ['1 – Critical', '2 – High Alert', '3 – Moderate', '4 �
 const PHASE_UNLOCK_THRESHOLD = 12
 
 export default function HUD() {
-    const { phase, setPhase, sessionCount, pendingSync, logSession, resetSession, appName, appSubtitle } = useDB()
-
-    // ── Selectors ────────────────────────────────
-    const [day, setDay] = useState(1)
-    const [hipScore, setHipScore] = useState(3)
-
-    // ── Workout state ────────────────────────────
-    const [mobChecked, setMobChecked] = useState({})   // { slot: bool }
-    const [strSets, setStrSets] = useState({})   // { 'ex1-s1': { kg:'', reps:'', papReps:'' } }
-    const [coreSets, setCoreSets] = useState({})       // { 1: {ex, sets, reps}, ...}
-    const [clrChecked, setClrChecked] = useState({})   // { slot: bool }
-    const [bagRounds, setBagRounds] = useState('')
-    const [bagCourse, setBagCourse] = useState('')
-    const [bagModules, setBagModules] = useState('')
-    const [bagWorkouts, setBagWorkouts] = useState('')
-    const [notes, setNotes] = useState('')
-
-    // ── Dynamic Gym Day state ────────────────────
-    const [gymSessionType, setGymSessionType] = useState('Combat')
-    const [altRows, setAltRows] = useState([])
-    const [altDuration, setAltDuration] = useState('')
+    const {
+        // DB-backed
+        phase, setPhase, sessionCount, pendingSync, logSession, appName, appSubtitle,
+        // Active workout state
+        day, setDay,
+        hipScore, setHipScore,
+        mobChecked, toggleMobilityCheck,
+        strSets, updateStrengthSet,
+        coreSets, updateCoreSet,
+        clrChecked, toggleCooldownCheck,
+        bagRounds, setBagRounds,
+        bagCourse, setBagCourse,
+        bagModules, setBagModules,
+        bagWorkouts, setBagWorkouts,
+        notes, setNotes,
+        gymSessionType, setGymSessionType,
+        altRows, setAltRows, addAltRow, updateAltRow, removeAltRow,
+        altDuration, setAltDuration,
+        resetActiveWorkout
+    } = useDB()
 
     // ── Playbook data ────────────────────────────
     const workout = usePlaybook(phase, day, hipScore)
@@ -84,6 +87,8 @@ export default function HUD() {
     }, [workout, mobChecked, clrChecked, strSets, bagRounds])
 
     // ── Log Session ──────────────────────────────
+    // NOTE: logSession in DBProvider now calls resetActiveWorkout() after persisting.
+    // The payload shape is identical to the original — no webhook fields changed.
     const handleLog = useCallback(async () => {
         if (!workout) return
         const pct = completeness()
@@ -103,6 +108,7 @@ export default function HUD() {
                 return { kg: Number(entry.kg) || '', reps: Number(entry.reps) || '', papReps: Number(entry.papReps) || '' }
             })
         }))
+
         await logSession({
             date: new Date().toISOString().slice(0, 10),
             day,
@@ -126,25 +132,14 @@ export default function HUD() {
             completeness: pct
         })
         alert(`✅ Session logged!\nDay ${day} | Phase ${phase}\nCompleteness: ${pct}%`)
-    }, [workout, completeness, strSets, coreSets, mobChecked, clrChecked, bagRounds, bagCourse, bagModules, bagWorkouts, notes, day, phase, hipScore, logSession])
+    }, [workout, completeness, strSets, coreSets, mobChecked, clrChecked, bagRounds, bagCourse, bagModules, bagWorkouts, notes, day, phase, hipScore, logSession, gymSessionType, altRows, altDuration])
 
     // ── Reset HUD ────────────────────────────────
+    // Day is intentionally preserved (matches original behaviour: "Day and Phase are kept")
     const handleReset = useCallback(() => {
         if (!confirm('Clear all inputs for next session? (Day and Phase are kept)')) return
-        setMobChecked({})
-        setStrSets({})
-        setCoreSets({})
-        setClrChecked({})
-        setBagRounds('')
-        setBagCourse('')
-        setBagModules('')
-        setBagWorkouts('')
-        setNotes('')
-        setHipScore(3)
-        setGymSessionType('Combat')
-        setAltRows([])
-        setAltDuration('')
-    }, [])
+        resetActiveWorkout()
+    }, [resetActiveWorkout])
 
     return (
         <div className="app">
@@ -232,7 +227,7 @@ export default function HUD() {
                         <MobilityBlock
                             slots={workout.mobSlots}
                             checked={mobChecked}
-                            onCheck={(slot, val) => setMobChecked(prev => ({ ...prev, [slot]: val }))}
+                            onCheck={toggleMobilityCheck}
                         />
 
                         {/* ── Strength + PAP ─────────────── */}
@@ -244,9 +239,7 @@ export default function HUD() {
                         <StrengthBlock
                             slots={workout.strSlots}
                             sets={strSets}
-                            onSetChange={(key, field, val) =>
-                                setStrSets(prev => ({ ...prev, [key]: { ...prev[key], [field]: val } }))
-                            }
+                            onSetChange={updateStrengthSet}
                             phase={phase}
                             day={day}
                         />
@@ -269,16 +262,14 @@ export default function HUD() {
                         {/* ── Core & Accessories ─────────── */}
                         <CoreBlock
                             sets={coreSets}
-                            onSetChange={(rowNum, field, val) =>
-                                setCoreSets(prev => ({ ...prev, [rowNum]: { ...prev[rowNum], [field]: val } }))
-                            }
+                            onSetChange={updateCoreSet}
                         />
 
                         {/* ── Cooldown ───────────────────── */}
                         <CooldownBlock
                             slots={workout.clrSlots}
                             checked={clrChecked}
-                            onCheck={(slot, val) => setClrChecked(prev => ({ ...prev, [slot]: val }))}
+                            onCheck={toggleCooldownCheck}
                         />
 
                         {/* ── Completeness ───────────────── */}
