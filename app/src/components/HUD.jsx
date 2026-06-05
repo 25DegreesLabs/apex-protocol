@@ -191,14 +191,6 @@ export default function HUD() {
                     let nextDay = lastSession.dayNumber + 1
                     if (nextDay > 7) nextDay = 1
                     
-                    let safety = 0
-                    while (safety < 7) {
-                        const plan = getDay(blockId, nextDay)
-                        if (plan && plan.dayType === 'training') break
-                        nextDay++
-                        if (nextDay > 7) nextDay = 1
-                        safety++
-                    }
                     setProgressSummary({ week: `Week ${weekNumber} / 8`, action: `Next: Day ${nextDay}` })
                 }
             } catch (err) {

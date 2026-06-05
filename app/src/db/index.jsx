@@ -20,7 +20,7 @@ import useRoundsTimer from '../hooks/useRoundsTimer.js'
 import { getDay } from '../hooks/useApexPlaybook.js'
 
 // ─── Webhook URL — hardcoded constant, never user-editable ─────────────────────
-export const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbzbox-9wQWentKHoS9n0xaMcxi7RoJGd4ivbQYzAdMxhVXELy1Mwl_rtImwzKW1aWaH/exec'
+export const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbxq3GooOwqzmDF9K1opIPeYyQQC5zIdNNcwH6LyB-CQcTiB1vumimTC-Jx8PBRcu_eq/exec'
 
 // ─── Database definition ──────────────────────────────────────────────────────
 const db = new Dexie('ApexProtocol')
@@ -153,8 +153,8 @@ export function DBProvider({ children }) {
         audioRef.current = new Audio('/bell.mp3')
         interimAudioRef.current = new Audio('/bell-interim.mp3')
         const unlockAudio = () => {
-            if (audioRef.current) { audioRef.current.play().then(() => audioRef.current.pause()).catch(() => {}) }
-            if (interimAudioRef.current) { interimAudioRef.current.play().then(() => interimAudioRef.current.pause()).catch(() => {}) }
+            if (audioRef.current) { audioRef.current.play().then(() => audioRef.current.pause()).catch(() => { }) }
+            if (interimAudioRef.current) { interimAudioRef.current.play().then(() => interimAudioRef.current.pause()).catch(() => { }) }
             document.removeEventListener('click', unlockAudio)
         }
         document.addEventListener('click', unlockAudio)
@@ -446,11 +446,11 @@ export function DBProvider({ children }) {
             alert('No recent session found to delete.')
             return false
         }
-        
+
         try {
             // Best effort to remove any pending syncs for this session first
             await db.syncQueue.where('sessionId').equals(lastSession.id).delete()
-            
+
             // Soft delete via webhook
             if (navigator.onLine) {
                 const res = await fetch(WEBHOOK_URL, {
@@ -462,7 +462,7 @@ export function DBProvider({ children }) {
                 // We assume opaque response is sent properly. 
                 // A more robust app would queue deletes if offline, but for this pilot best-effort is fine.
             }
-            
+
             await db.sessions.delete(lastSession.id)
             await refreshCounts()
             await refreshPending()

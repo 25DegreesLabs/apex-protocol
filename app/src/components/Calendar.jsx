@@ -45,7 +45,7 @@ export default function Calendar() {
 
                             return (
                                 <div key={s.id} className="card" style={{ padding: 14 }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, gap: 16 }}>
                                         <div>
                                             <div style={{ fontWeight: 800, color: 'var(--text)', fontSize: '1.05rem' }}>{displayDate}</div>
                                             <div style={{ fontSize: '0.75rem', color: 'var(--label)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -53,8 +53,8 @@ export default function Calendar() {
                                                 {s.focus ? ` — ${s.focus}` : ''}
                                             </div>
                                         </div>
-                                        <div className="badge badge-green">
-                                            {s.rowCount != null ? `${s.rowCount} sets` : 'Logged'}
+                                        <div className="badge badge-green" style={{ flexShrink: 0 }}>
+                                            {s.rowCount != null ? (s.rowCount === 1 ? '1 set' : `${s.rowCount} sets`) : 'Logged'}
                                         </div>
                                     </div>
 

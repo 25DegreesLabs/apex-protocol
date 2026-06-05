@@ -5,6 +5,7 @@ import Timer from './Timer.jsx'
 import Calendar from './Calendar.jsx'
 import Settings from './Settings.jsx'
 import BottomNav from './BottomNav.jsx'
+import ApexTab from './ApexTab.jsx'
 
 export default function AppShell() {
     const [activeTab, setActiveTab] = useState('hud')
@@ -16,6 +17,7 @@ export default function AppShell() {
             {activeTab === 'timer' && <Timer />}
             {activeTab === 'calendar' && <Calendar />}
             {activeTab === 'settings' && <Settings />}
+            {activeTab === 'apex' && <ApexTab />}
 
             <BottomNav
                 activeTab={activeTab}

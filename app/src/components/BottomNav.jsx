@@ -1,6 +1,6 @@
 export default function BottomNav({ activeTab, onChange }) {
     return (
-        <nav className="bottom-nav" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)' }}>
+        <nav className="bottom-nav" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)' }}>
             <button
                 className={activeTab === 'hud' ? 'active' : ''}
                 onClick={() => onChange('hud')}
@@ -28,6 +28,13 @@ export default function BottomNav({ activeTab, onChange }) {
             >
                 <span className="bottom-nav__icon">📖</span>
                 <span>Playbook</span>
+            </button>
+            <button
+                className={activeTab === 'apex' ? 'active' : ''}
+                onClick={() => onChange('apex')}
+            >
+                <span className="bottom-nav__icon">⚡</span>
+                <span>APEX</span>
             </button>
             <button
                 className={activeTab === 'settings' ? 'active' : ''}

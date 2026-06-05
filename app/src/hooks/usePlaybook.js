@@ -1,5 +1,5 @@
 /**
- * usePlaybook — Fighter's OS Core Data Hook
+ * usePlaybook — Apex Protocol Core Data Hook
  * ─────────────────────────────────────────
  * Parses the bundled playbook.csv and returns a structured
  * workout object for any given Phase + Day + HipScore combination.

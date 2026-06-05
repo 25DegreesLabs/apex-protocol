@@ -14,9 +14,9 @@ export default defineConfig({
             registerType: 'autoUpdate',
             includeAssets: ['favicon.ico', 'icon-192.png', 'icon-512.png', 'icon-512-maskable.png'],
             manifest: {
-                name: "Fighter's OS",
-                short_name: 'FighterOS',
-                description: 'Combat Performance Training System',
+                name: "Apex Protocol",
+                short_name: 'ApexProtocol',
+                description: 'Tactical Knowledge Base',
                 theme_color: '#0a0a14',
                 background_color: '#0a0a14',
                 display: 'standalone',
