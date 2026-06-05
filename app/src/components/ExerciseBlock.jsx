@@ -9,9 +9,11 @@
  *   exercise   — the exercise object from activeSession.exercises[]
  *   onSetChange(exerciseId, setNumber, field, value) — callback from HUD
  */
+import RpeTag from './RpeTag.jsx'
 
 export default function ExerciseBlock({ exercise, onSetChange }) {
     const { exerciseId, exerciseName, target, supersetLabel, prescribedReps, prescribedRpe, quickNote, sets } = exercise
+
 
     const labelColor = supersetLabel
         ? 'var(--primary)'
@@ -43,7 +45,7 @@ export default function ExerciseBlock({ exercise, onSetChange }) {
                     {(prescribedReps || prescribedRpe) && (
                         <div className="str-card__target" style={{ marginTop: 2 }}>
                             {prescribedReps && <span>Target: {prescribedReps} reps</span>}
-                            {prescribedRpe && <span style={{ marginLeft: 8, color: 'var(--warn)' }}>@ RPE {prescribedRpe}</span>}
+                            {prescribedRpe && <RpeTag value={prescribedRpe} />}
                         </div>
                     )}
                     {quickNote && (
@@ -57,7 +59,7 @@ export default function ExerciseBlock({ exercise, onSetChange }) {
                 <span>Set</span>
                 <span>Load (kg)</span>
                 <span>Reps</span>
-                <span>RPE</span>
+                <RpeTag label />
             </div>
 
             {sets.map(set => (

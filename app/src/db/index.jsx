@@ -151,7 +151,9 @@ export function DBProvider({ children }) {
     // ── Preload bell audio ────────────────────────────────────────────────────
     useEffect(() => {
         audioRef.current = new Audio('/bell.mp3')
+        audioRef.current.volume = 1.0
         interimAudioRef.current = new Audio('/bell-interim.mp3')
+        interimAudioRef.current.volume = 1.0
         const unlockAudio = () => {
             if (audioRef.current) { audioRef.current.play().then(() => audioRef.current.pause()).catch(() => { }) }
             if (interimAudioRef.current) { interimAudioRef.current.play().then(() => interimAudioRef.current.pause()).catch(() => { }) }
