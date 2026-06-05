@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import { db } from '../db/index.jsx'
-import { getDailyFocus } from '../hooks/usePlaybook.js'
 
 export default function Calendar() {
     const [sessions, setSessions] = useState([])
@@ -20,8 +19,8 @@ export default function Calendar() {
     return (
         <div className="app">
             <header className="page-header">
-                <h1>📅 Fight Log</h1>
-                <div className="subtitle">Session History</div>
+                <h1>📅 Session Log</h1>
+                <div className="subtitle">Workout History</div>
             </header>
 
             <main className="content" style={{ paddingBottom: 100 }}>
@@ -35,11 +34,14 @@ export default function Calendar() {
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                         {sessions.map(s => {
-                            // Extract date safely
                             const dateStr = s.date || 'Unknown Date'
-                            const displayDate = new Date(dateStr).toLocaleDateString('en-US', {
+                            const displayDate = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', {
                                 weekday: 'short', month: 'short', day: 'numeric'
                             })
+
+                            const blockLabel = s.blockId
+                                ? s.blockId.replace('phase', 'Phase ')
+                                : 'Phase 1'
 
                             return (
                                 <div key={s.id} className="card" style={{ padding: 14 }}>
@@ -47,38 +49,20 @@ export default function Calendar() {
                                         <div>
                                             <div style={{ fontWeight: 800, color: 'var(--text)', fontSize: '1.05rem' }}>{displayDate}</div>
                                             <div style={{ fontSize: '0.75rem', color: 'var(--label)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                                Phase {s.phase} • Day {s.day} {getDailyFocus(s.day) ? `— ${getDailyFocus(s.day)}` : ''}
+                                                {blockLabel} • Day {s.dayNumber}
+                                                {s.focus ? ` — ${s.focus}` : ''}
                                             </div>
                                         </div>
-                                        <div className={`badge ${s.sessionType === 'S&C' ? 'badge-green' : s.sessionType === 'Combat' ? 'badge-red' : 'badge-amber'}`}>
-                                            {s.sessionType || 'S&C'}
+                                        <div className="badge badge-green">
+                                            {s.rowCount != null ? `${s.rowCount} sets` : 'Logged'}
                                         </div>
                                     </div>
 
-                                    {s.sessionType === 'S&C' && s.completeness !== undefined && (
-                                        <div style={{ fontSize: '0.8rem', color: 'var(--dim)', marginBottom: 8 }}>
-                                            Completeness: <strong style={{ color: 'var(--primary)' }}>{s.completeness}%</strong>
-                                        </div>
-                                    )}
-
-                                    {s.sessionDuration > 0 && (
-                                        <div style={{ fontSize: '0.8rem', color: 'var(--dim)', marginBottom: 8 }}>
-                                            Duration: <strong>{s.sessionDuration} mins</strong>
-                                        </div>
-                                    )}
-
-                                    {(s.notes || s.altSessionDetails) && (
+                                    {s.notes && (
                                         <div style={{ background: 'var(--bg)', padding: 10, borderRadius: 'var(--radius-sm)', marginTop: 8 }}>
-                                            {s.altSessionDetails && (
-                                                <div style={{ fontSize: '0.75rem', color: 'var(--warn)', whiteSpace: 'pre-wrap', marginBottom: s.notes ? 8 : 0 }}>
-                                                    {s.altSessionDetails}
-                                                </div>
-                                            )}
-                                            {s.notes && (
-                                                <div style={{ fontSize: '0.8rem', color: 'var(--dim)', fontStyle: 'italic', whiteSpace: 'pre-wrap' }}>
-                                                    "{s.notes}"
-                                                </div>
-                                            )}
+                                            <div style={{ fontSize: '0.8rem', color: 'var(--dim)', fontStyle: 'italic', whiteSpace: 'pre-wrap' }}>
+                                                "{s.notes}"
+                                            </div>
                                         </div>
                                     )}
                                 </div>

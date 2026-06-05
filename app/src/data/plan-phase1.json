@@ -1,0 +1,287 @@
+{
+  "blockId": "phase1",
+  "blockLabel": "Phase 1 — Foundation",
+  "weeks": [1, 2, 3, 4],
+  "days": {
+    "1": {
+      "dayNumber": 1,
+      "dayLabel": "Day 1",
+      "dayType": "training",
+      "focus": "Lower Body — Squat & Vertical Power",
+      "warmup": [
+        "3 min easy bike or row",
+        "Hip 90/90 — 60s each side",
+        "Glute bridge hold — 30s",
+        "Ankle circles — 10 each direction"
+      ],
+      "exercises": [
+        {
+          "id": "p1-d1-ex1",
+          "name": "Barbell Back Squat",
+          "target": "Quads / Glutes",
+          "supersetLabel": null,
+          "prescribedSets": 4,
+          "prescribedReps": "5",
+          "prescribedRpe": 8,
+          "quickNote": "Brace hard. Knees track toes. Drive floor away."
+        },
+        {
+          "id": "p1-d1-ex2",
+          "name": "Box Jump",
+          "target": "Vertical Power",
+          "supersetLabel": null,
+          "prescribedSets": 4,
+          "prescribedReps": "3",
+          "prescribedRpe": 7,
+          "quickNote": "Full reset between reps. Land soft."
+        },
+        {
+          "id": "p1-d1-ex3",
+          "name": "Romanian Deadlift",
+          "target": "Hamstrings / Glutes",
+          "supersetLabel": "A1",
+          "prescribedSets": 3,
+          "prescribedReps": "10–12",
+          "prescribedRpe": 7,
+          "quickNote": "Hip hinge. Keep bar close. Feel the hamstring stretch."
+        },
+        {
+          "id": "p1-d1-ex4",
+          "name": "Nordic Hamstring Curl",
+          "target": "Hamstrings",
+          "supersetLabel": "A2",
+          "prescribedSets": 3,
+          "prescribedReps": "4–6",
+          "prescribedRpe": 8,
+          "quickNote": "Slow eccentric. Use hands to catch if needed."
+        },
+        {
+          "id": "p1-d1-ex5",
+          "name": "Calf Raise (Single Leg)",
+          "target": "Calves / Ankle Stability",
+          "supersetLabel": null,
+          "prescribedSets": 3,
+          "prescribedReps": "12",
+          "prescribedRpe": 6,
+          "quickNote": "Full range. Pause at top."
+        }
+      ]
+    },
+    "2": {
+      "dayNumber": 2,
+      "dayLabel": "Day 2",
+      "dayType": "rest",
+      "focus": "Rest & Recovery",
+      "warmup": [],
+      "exercises": []
+    },
+    "3": {
+      "dayNumber": 3,
+      "dayLabel": "Day 3",
+      "dayType": "training",
+      "focus": "Upper Body Push — Horizontal Strength & Rotational Power",
+      "warmup": [
+        "Band pull-aparts — 2x15",
+        "Shoulder CARs — 5 each arm",
+        "Push-up to downward dog — 10 reps",
+        "Thoracic rotation — 8 each side"
+      ],
+      "exercises": [
+        {
+          "id": "p1-d3-ex1",
+          "name": "Barbell Bench Press",
+          "target": "Chest / Anterior Deltoid / Triceps",
+          "supersetLabel": null,
+          "prescribedSets": 4,
+          "prescribedReps": "5",
+          "prescribedRpe": 8,
+          "quickNote": "Retract scapula. Elbows ~45°. Leg drive."
+        },
+        {
+          "id": "p1-d3-ex2",
+          "name": "Medicine Ball Rotational Throw",
+          "target": "Rotational Power",
+          "supersetLabel": null,
+          "prescribedSets": 4,
+          "prescribedReps": "4 each side",
+          "prescribedRpe": 7,
+          "quickNote": "Drive from hips. Max intent on every rep."
+        },
+        {
+          "id": "p1-d3-ex3",
+          "name": "Dumbbell Incline Press",
+          "target": "Upper Chest / Shoulders",
+          "supersetLabel": "A1",
+          "prescribedSets": 3,
+          "prescribedReps": "10–12",
+          "prescribedRpe": 7,
+          "quickNote": "Control the eccentric. Squeeze at top."
+        },
+        {
+          "id": "p1-d3-ex4",
+          "name": "Cable Face Pull",
+          "target": "Rear Deltoid / External Rotators",
+          "supersetLabel": "A2",
+          "prescribedSets": 3,
+          "prescribedReps": "15",
+          "prescribedRpe": 6,
+          "quickNote": "Pull to nose height. Externally rotate at end range."
+        },
+        {
+          "id": "p1-d3-ex5",
+          "name": "Tricep Rope Pushdown",
+          "target": "Triceps",
+          "supersetLabel": null,
+          "prescribedSets": 3,
+          "prescribedReps": "12–15",
+          "prescribedRpe": 6,
+          "quickNote": "Elbows fixed. Spread rope at bottom."
+        }
+      ]
+    },
+    "4": {
+      "dayNumber": 4,
+      "dayLabel": "Day 4",
+      "dayType": "rest",
+      "focus": "Rest & Recovery",
+      "warmup": [],
+      "exercises": []
+    },
+    "5": {
+      "dayNumber": 5,
+      "dayLabel": "Day 5",
+      "dayType": "training",
+      "focus": "Lower Body — Hinge & Horizontal Power",
+      "warmup": [
+        "3 min easy bike or row",
+        "Hip flexor stretch — 60s each side",
+        "Banded good morning — 2x10",
+        "Cat-cow — 10 reps"
+      ],
+      "exercises": [
+        {
+          "id": "p1-d5-ex1",
+          "name": "Barbell Deadlift",
+          "target": "Posterior Chain / Full Body",
+          "supersetLabel": null,
+          "prescribedSets": 4,
+          "prescribedReps": "4",
+          "prescribedRpe": 8,
+          "quickNote": "Neutral spine. Push floor. Bar stays over mid-foot."
+        },
+        {
+          "id": "p1-d5-ex2",
+          "name": "Broad Jump",
+          "target": "Horizontal Power",
+          "supersetLabel": null,
+          "prescribedSets": 4,
+          "prescribedReps": "3",
+          "prescribedRpe": 7,
+          "quickNote": "Swing arms. Full hip extension. Stick the landing."
+        },
+        {
+          "id": "p1-d5-ex3",
+          "name": "Bulgarian Split Squat",
+          "target": "Quads / Glutes (Unilateral)",
+          "supersetLabel": "A1",
+          "prescribedSets": 3,
+          "prescribedReps": "8 each side",
+          "prescribedRpe": 7,
+          "quickNote": "Rear foot elevated. Torso upright. Drive through heel."
+        },
+        {
+          "id": "p1-d5-ex4",
+          "name": "Leg Curl (Machine)",
+          "target": "Hamstrings",
+          "supersetLabel": "A2",
+          "prescribedSets": 3,
+          "prescribedReps": "10–12",
+          "prescribedRpe": 7,
+          "quickNote": "Controlled eccentric. No swinging."
+        },
+        {
+          "id": "p1-d5-ex5",
+          "name": "Hip Thrust (Barbell)",
+          "target": "Glutes",
+          "supersetLabel": null,
+          "prescribedSets": 3,
+          "prescribedReps": "12",
+          "prescribedRpe": 7,
+          "quickNote": "Drive hips to ceiling. Squeeze hard at top. Chin tuck."
+        }
+      ]
+    },
+    "6": {
+      "dayNumber": 6,
+      "dayLabel": "Day 6",
+      "dayType": "training",
+      "focus": "Upper Body Pull & Posterior Chain",
+      "warmup": [
+        "Band pull-aparts — 2x15",
+        "Dead hang — 20s",
+        "Thoracic extension over foam roller — 60s",
+        "Scap push-ups — 10"
+      ],
+      "exercises": [
+        {
+          "id": "p1-d6-ex1",
+          "name": "Barbell Bent-Over Row",
+          "target": "Lats / Rhomboids / Biceps",
+          "supersetLabel": null,
+          "prescribedSets": 4,
+          "prescribedReps": "5",
+          "prescribedRpe": 8,
+          "quickNote": "Hinge to ~45°. Drive elbows back. No body English."
+        },
+        {
+          "id": "p1-d6-ex2",
+          "name": "Weighted Pull-Up",
+          "target": "Lats / Biceps",
+          "supersetLabel": "A1",
+          "prescribedSets": 3,
+          "prescribedReps": "5–6",
+          "prescribedRpe": 8,
+          "quickNote": "Full hang. Pull chest to bar. Slow lower."
+        },
+        {
+          "id": "p1-d6-ex3",
+          "name": "Single-Arm Dumbbell Row",
+          "target": "Lats / Mid-Back",
+          "supersetLabel": "A2",
+          "prescribedSets": 3,
+          "prescribedReps": "10 each side",
+          "prescribedRpe": 7,
+          "quickNote": "Support on bench. Elbow tracks back and up."
+        },
+        {
+          "id": "p1-d6-ex4",
+          "name": "Rear Delt Fly (Dumbbell)",
+          "target": "Posterior Deltoid",
+          "supersetLabel": null,
+          "prescribedSets": 3,
+          "prescribedReps": "15",
+          "prescribedRpe": 6,
+          "quickNote": "Hinge forward. Lead with elbows. Squeeze shoulder blades."
+        },
+        {
+          "id": "p1-d6-ex5",
+          "name": "Barbell Bicep Curl",
+          "target": "Biceps",
+          "supersetLabel": null,
+          "prescribedSets": 3,
+          "prescribedReps": "10–12",
+          "prescribedRpe": 6,
+          "quickNote": "Elbows fixed. Full supination at top."
+        }
+      ]
+    },
+    "7": {
+      "dayNumber": 7,
+      "dayLabel": "Day 7",
+      "dayType": "recovery",
+      "focus": "Active Recovery",
+      "warmup": [],
+      "exercises": []
+    }
+  }
+}

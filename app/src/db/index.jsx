@@ -1,38 +1,44 @@
 /**
- * db/index.js — IndexedDB layer using Dexie.js
+ * db/index.jsx — Apex Protocol IndexedDB layer (Dexie.js)
  *
  * Tables:
  *   sessions   — logged workout sessions (source of truth, local)
  *   syncQueue  — sessions pending push to Google Sheets webhook
- *   settings   — app config (currentPhase, webhookUrl)
+ *   settings   — app config (appName, appSubtitle, etc.)
  *
  * In-memory shared state (not persisted to Dexie):
- *   activeWorkout — current HUD session inputs (survives tab switches)
+ *   activeSession — current HUD session inputs (survives tab switches)
  *   timerState    — stopwatch + countdown state (survives tab switches)
+ *
+ * Schema contract: spreadsheet/schema-spec.md
+ * Webhook: WEBHOOK_URL constant — NOT stored in IndexedDB, NOT user-editable.
  */
 
 import Dexie from 'dexie'
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from 'react'
 import useRoundsTimer from '../hooks/useRoundsTimer.js'
+import { getDay } from '../hooks/useApexPlaybook.js'
+
+// ─── Webhook URL — hardcoded constant, never user-editable ─────────────────────
+export const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbxZqYHO-K0sr_7hyhngon31nqMSBvylbKN6kJIUPgxwozJoHWOIwA96d1H86ulqm-tJ/exec'
 
 // ─── Database definition ──────────────────────────────────────────────────────
-const db = new Dexie('FightersOS')
+const db = new Dexie('ApexProtocol')
 
 db.version(1).stores({
-    sessions: '++id, date, day, phase, hipScore',
+    sessions: '++id, date, dayNumber, blockId',
     syncQueue: '++id, sessionId, attempts',
     settings: 'key'
 })
 
 export { db }
 
-// ─── Default settings ─────────────────────────────────────────────────────────
+// ─── Settings helpers ─────────────────────────────────────────────────────────
 const DEFAULTS = {
-    currentPhase: 1,
-    webhookUrl: 'https://script.google.com/macros/s/AKfycbzXC4ljnffgx1wQd_v7Pstvr8tZpsq1lDS_2kHzb0bb8cdvIrIC6FSUIS5Np1YqWvxP/exec',
-    appName: "Fighter's OS",
-    appSubtitle: "Combat Performance",
-    dailyIgnitionEnabled: true
+    appName: 'APEX PROTOCOL',
+    appSubtitle: 'Performance Training',
+    dailyIgnitionEnabled: true,
+    currentBlock: 'phase1'
 }
 
 async function getSetting(key) {
@@ -44,24 +50,59 @@ async function setSetting(key, value) {
     await db.settings.put({ key, value })
 }
 
-// ─── Active workout defaults ───────────────────────────────────────────────────
-const WORKOUT_DEFAULTS = {
-    day: 1,
-    hipScore: 3,
-    hudScrollY: 0,
-    mobChecked: {},
-    strSets: {},
-    coreSets: {},
-    clrChecked: {},
-    bagRounds: '',
-    bagCourse: '',
-    bagModules: '',
-    bagWorkouts: '',
-    notes: '',
-    gymSessionType: 'Combat',
-    altRows: [],
-    altDuration: ''
+// ─── Active session defaults ───────────────────────────────────────────────────
+/**
+ * Build a blank activeSession for a given blockId + dayNumber.
+ * Reads plan data via getDay() to initialise the right exercises and sets.
+ *
+ * @param {string} blockId
+ * @param {number} dayNumber
+ * @returns {Object} activeSession
+ */
+function buildEmptySession(blockId, dayNumber) {
+    const dayPlan = getDay(blockId, dayNumber)
+    const date = new Date().toISOString().slice(0, 10)
+
+    if (!dayPlan || !Array.isArray(dayPlan.exercises) || dayPlan.exercises.length === 0) {
+        return {
+            blockId,
+            dayNumber,
+            date,
+            focus: dayPlan?.focus ?? '',
+            notes: '',
+            exercises: []
+        }
+    }
+
+    const exercises = dayPlan.exercises.map(ex => ({
+        exerciseId: ex.id,
+        exerciseName: ex.name,
+        target: ex.target,
+        supersetLabel: ex.supersetLabel ?? null,
+        prescribedSets: ex.prescribedSets,
+        prescribedReps: ex.prescribedReps,
+        prescribedRpe: ex.prescribedRpe,
+        quickNote: ex.quickNote,
+        sets: Array.from({ length: ex.prescribedSets }, (_, i) => ({
+            setNumber: i + 1,
+            load: '',
+            reps: '',
+            rpe: ''
+        }))
+    }))
+
+    return {
+        blockId,
+        dayNumber,
+        date,
+        focus: dayPlan.focus,
+        notes: '',
+        exercises
+    }
 }
+
+const DEFAULT_BLOCK = 'phase1'
+const DEFAULT_DAY = 1
 
 // ─── Context ──────────────────────────────────────────────────────────────────
 const DBContext = createContext(null)
@@ -71,57 +112,42 @@ const DBContext = createContext(null)
  */
 export function DBProvider({ children }) {
     // ── Persistent DB-backed state ─────────────────────────────────────────────
-    const [phase, _setPhase] = useState(1)
     const [appName, _setAppName] = useState(DEFAULTS.appName)
     const [appSubtitle, _setAppSubtitle] = useState(DEFAULTS.appSubtitle)
     const [dailyIgnitionEnabled, _setDailyIgnitionEnabled] = useState(DEFAULTS.dailyIgnitionEnabled)
+    const [currentBlock, _setCurrentBlock] = useState(DEFAULTS.currentBlock)
     const [bookmarkedIgnitions, setBookmarkedIgnitions] = useState([])
     const [ignitionHasShown, setIgnitionHasShown] = useState(false)
     const [pendingSync, setPending] = useState(0)
-    const [sessionCount, setCount] = useState({}) // { 1: n, 2: n, 3: n }
+    const [sessionCount, setCount] = useState({})
     const [ready, setReady] = useState(false)
 
-    // ── In-memory active workout state (not persisted to Dexie) ───────────────
-    const [day, setDay] = useState(WORKOUT_DEFAULTS.day)
-    const [hipScore, setHipScore] = useState(WORKOUT_DEFAULTS.hipScore)
-    const [hudScrollY, setHudScrollY] = useState(WORKOUT_DEFAULTS.hudScrollY)
-    const [mobChecked, setMobChecked] = useState(WORKOUT_DEFAULTS.mobChecked)
-    const [strSets, setStrSets] = useState(WORKOUT_DEFAULTS.strSets)
-    const [coreSets, setCoreSets] = useState(WORKOUT_DEFAULTS.coreSets)
-    const [clrChecked, setClrChecked] = useState(WORKOUT_DEFAULTS.clrChecked)
-    const [bagRounds, setBagRounds] = useState(WORKOUT_DEFAULTS.bagRounds)
-    const [bagCourse, setBagCourse] = useState(WORKOUT_DEFAULTS.bagCourse)
-    const [bagModules, setBagModules] = useState(WORKOUT_DEFAULTS.bagModules)
-    const [bagWorkouts, setBagWorkouts] = useState(WORKOUT_DEFAULTS.bagWorkouts)
-    const [notes, setNotes] = useState(WORKOUT_DEFAULTS.notes)
-    const [gymSessionType, setGymSessionType] = useState(WORKOUT_DEFAULTS.gymSessionType)
-    const [altRows, setAltRows] = useState(WORKOUT_DEFAULTS.altRows)
-    const [altDuration, setAltDuration] = useState(WORKOUT_DEFAULTS.altDuration)
+    // ── Active session (in-memory, not persisted to Dexie) ────────────────────
+    const [activeSession, _setActiveSession] = useState(() =>
+        buildEmptySession(DEFAULT_BLOCK, DEFAULT_DAY)
+    )
 
-    // ── In-memory timer state (not persisted to Dexie) ────────────────────────
+    // ── In-memory timer state ─────────────────────────────────────────────────
     const [swTime, setSwTime] = useState(0)
     const [swRunning, setSwRunning] = useState(false)
     const [cdTime, setCdTime] = useState(0)
     const [cdRunning, setCdRunning] = useState(false)
     const [alertState, setAlertState] = useState('none')
 
-    // Refs for intervals and audio — not React state, no serialisation needed
     const swIntervalRef = useRef(null)
-    const swStartRef = useRef(0)       // timestamp anchor for accurate elapsed ms
+    const swStartRef = useRef(0)
     const cdIntervalRef = useRef(null)
     const audioRef = useRef(null)
     const interimAudioRef = useRef(null)
     const wakeLockRef = useRef(null)
 
-    // ── Preload bell audio once at provider mount ─────────────────────────────
+    // ── Preload bell audio ────────────────────────────────────────────────────
     useEffect(() => {
         audioRef.current = new Audio('/bell.mp3')
         interimAudioRef.current = new Audio('/bell-interim.mp3')
-        
-        // Optional: unlock audio on first document click
         const unlockAudio = () => {
-            if (audioRef.current) { audioRef.current.play().then(() => audioRef.current.pause()).catch(() => {}); }
-            if (interimAudioRef.current) { interimAudioRef.current.play().then(() => interimAudioRef.current.pause()).catch(() => {}); }
+            if (audioRef.current) { audioRef.current.play().then(() => audioRef.current.pause()).catch(() => {}) }
+            if (interimAudioRef.current) { interimAudioRef.current.play().then(() => interimAudioRef.current.pause()).catch(() => {}) }
             document.removeEventListener('click', unlockAudio)
         }
         document.addEventListener('click', unlockAudio)
@@ -146,7 +172,7 @@ export function DBProvider({ children }) {
         }
     }, [])
 
-    // ── Alarm (bell + vibrate + flash) ────────────────────────────────────────
+    // ── Alarm ─────────────────────────────────────────────────────────────────
     const triggerAlarm = useCallback(() => {
         if (audioRef.current) {
             audioRef.current.currentTime = 0
@@ -156,9 +182,7 @@ export function DBProvider({ children }) {
             if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
                 navigator.vibrate([500, 200, 500])
             }
-        } catch (e) {
-            console.warn('Vibration not supported', e)
-        }
+        } catch (e) { console.warn('Vibration not supported', e) }
         setAlertState('main')
         setTimeout(() => setAlertState(prev => prev === 'main' ? 'none' : prev), 800)
     }, [])
@@ -170,11 +194,9 @@ export function DBProvider({ children }) {
         }
         try {
             if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-                navigator.vibrate([200]) // Short vibrate for interim
+                navigator.vibrate([200])
             }
-        } catch (e) {
-            console.warn('Vibration not supported', e)
-        }
+        } catch (e) { console.warn('Vibration not supported', e) }
         setAlertState('interim')
         setTimeout(() => setAlertState(prev => prev === 'interim' ? 'none' : prev), 400)
     }, [])
@@ -192,28 +214,27 @@ export function DBProvider({ children }) {
     const saveRoundsSetup = useCallback(async (setup) => {
         setSavedRoundsSetups(prev => {
             if (prev.length >= 10) {
-                alert("Maximum 10 saved setups reached. Please delete one first.");
-                return prev;
+                alert('Maximum 10 saved setups reached. Please delete one first.')
+                return prev
             }
-            const newSetups = [...prev, { ...setup, id: Date.now() }];
-            setSetting('savedRoundsTimers', newSetups).catch(console.error);
-            return newSetups;
-        });
-    }, []);
+            const newSetups = [...prev, { ...setup, id: Date.now() }]
+            setSetting('savedRoundsTimers', newSetups).catch(console.error)
+            return newSetups
+        })
+    }, [])
 
     const deleteRoundsSetup = useCallback(async (id) => {
         setSavedRoundsSetups(prev => {
-            const newSetups = prev.filter(s => s.id !== id);
-            setSetting('savedRoundsTimers', newSetups).catch(console.error);
-            return newSetups;
-        });
-    }, []);
+            const newSetups = prev.filter(s => s.id !== id)
+            setSetting('savedRoundsTimers', newSetups).catch(console.error)
+            return newSetups
+        })
+    }, [])
 
-    // ── Stopwatch interval — runs in provider, survives tab unmount ───────────
+    // ── Stopwatch ─────────────────────────────────────────────────────────────
     useEffect(() => {
         if (swRunning) {
             requestWakeLock()
-            // Re-anchor start time against current swTime so pausing preserves progress
             swStartRef.current = Date.now() - swTime
             swIntervalRef.current = setInterval(() => {
                 setSwTime(Date.now() - swStartRef.current)
@@ -223,9 +244,9 @@ export function DBProvider({ children }) {
             if (!cdRunning) releaseWakeLock()
         }
         return () => clearInterval(swIntervalRef.current)
-    }, [swRunning]) // intentionally excludes swTime — anchor is set once on start
+    }, [swRunning])
 
-    // ── Countdown interval — runs in provider, survives tab unmount ───────────
+    // ── Countdown ─────────────────────────────────────────────────────────────
     useEffect(() => {
         if (cdRunning && cdTime > 0) {
             requestWakeLock()
@@ -248,105 +269,80 @@ export function DBProvider({ children }) {
     }, [cdRunning, cdTime, triggerAlarm, swRunning])
 
     // ── Timer actions ─────────────────────────────────────────────────────────
-
-    const toggleStopwatch = useCallback(() => {
-        setSwRunning(prev => !prev)
-    }, [])
-
-    const resetStopwatch = useCallback(() => {
-        setSwRunning(false)
-        setSwTime(0)
-    }, [])
-
+    const toggleStopwatch = useCallback(() => setSwRunning(prev => !prev), [])
+    const resetStopwatch = useCallback(() => { setSwRunning(false); setSwTime(0) }, [])
     const startCountdown = useCallback((minutes) => {
-        setCdTime(Math.round(minutes * 60))
-        setCdRunning(true)
+        setCdTime(Math.round(minutes * 60)); setCdRunning(true)
     }, [])
-
-    const toggleCountdown = useCallback(() => {
-        setCdRunning(prev => !prev)
-    }, [])
-
-    const cancelCountdown = useCallback(() => {
-        setCdRunning(false)
-        setCdTime(0)
-    }, [])
-
+    const toggleCountdown = useCallback(() => setCdRunning(prev => !prev), [])
+    const cancelCountdown = useCallback(() => { setCdRunning(false); setCdTime(0) }, [])
     const addCountdownTime = useCallback((seconds) => {
         setCdTime(prev => prev + seconds)
-        if (cdTime === 0) {
-            setCdRunning(true)
-        }
+        if (cdTime === 0) setCdRunning(true)
     }, [cdTime])
 
-    // ── Active workout actions ────────────────────────────────────────────────
+    // ── Active session actions ────────────────────────────────────────────────
 
-    const toggleMobilityCheck = useCallback((slot, val) => {
-        setMobChecked(prev => ({ ...prev, [slot]: val }))
-    }, [])
-
-    const updateStrengthSet = useCallback((key, field, val) => {
-        setStrSets(prev => ({ ...prev, [key]: { ...prev[key], [field]: val } }))
-    }, [])
-
-    const updateCoreSet = useCallback((rowNum, field, val) => {
-        setCoreSets(prev => ({ ...prev, [rowNum]: { ...prev[rowNum], [field]: val } }))
-    }, [])
-
-    const toggleCooldownCheck = useCallback((slot, val) => {
-        setClrChecked(prev => ({ ...prev, [slot]: val }))
-    }, [])
-
-    const addAltRow = useCallback(() => {
-        setAltRows(prev => [...prev, { id: Date.now(), name: '', v1: '', v2: '', v3: '' }])
-    }, [])
-
-    const updateAltRow = useCallback((id, field, value) => {
-        setAltRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r))
-    }, [])
-
-    const removeAltRow = useCallback((id) => {
-        setAltRows(prev => prev.filter(r => r.id !== id))
+    /**
+     * selectDay — switches to a new blockId + dayNumber, rebuilding the session.
+     * Resets all set inputs. Called when the user changes the day selector.
+     */
+    const selectDay = useCallback((blockId, dayNumber) => {
+        _setActiveSession(buildEmptySession(blockId, dayNumber))
     }, [])
 
     /**
-     * resetActiveWorkout — resets all in-progress HUD inputs to defaults.
-     * Day is intentionally kept (matches existing handleReset behaviour in HUD).
+     * updateSet — updates a single field on a specific set of a specific exercise.
+     *
+     * @param {string} exerciseId  — stable plan id e.g. "p1-d1-ex1"
+     * @param {number} setNumber   — 1-indexed
+     * @param {string} field       — "load" | "reps" | "rpe"
+     * @param {string} value       — raw string from input
      */
-    const resetActiveWorkout = useCallback(() => {
-        setHipScore(WORKOUT_DEFAULTS.hipScore)
-        setHudScrollY(WORKOUT_DEFAULTS.hudScrollY)
-        setMobChecked(WORKOUT_DEFAULTS.mobChecked)
-        setStrSets(WORKOUT_DEFAULTS.strSets)
-        setCoreSets(WORKOUT_DEFAULTS.coreSets)
-        setClrChecked(WORKOUT_DEFAULTS.clrChecked)
-        setBagRounds(WORKOUT_DEFAULTS.bagRounds)
-        setBagCourse(WORKOUT_DEFAULTS.bagCourse)
-        setBagModules(WORKOUT_DEFAULTS.bagModules)
-        setBagWorkouts(WORKOUT_DEFAULTS.bagWorkouts)
-        setNotes(WORKOUT_DEFAULTS.notes)
-        setGymSessionType(WORKOUT_DEFAULTS.gymSessionType)
-        setAltRows(WORKOUT_DEFAULTS.altRows)
-        setAltDuration(WORKOUT_DEFAULTS.altDuration)
+    const updateSet = useCallback((exerciseId, setNumber, field, value) => {
+        _setActiveSession(prev => ({
+            ...prev,
+            exercises: prev.exercises.map(ex => {
+                if (ex.exerciseId !== exerciseId) return ex
+                return {
+                    ...ex,
+                    sets: ex.sets.map(s =>
+                        s.setNumber === setNumber ? { ...s, [field]: value } : s
+                    )
+                }
+            })
+        }))
     }, [])
 
-    // ── Load settings on mount ────────────────────────────────────────────────
+    /**
+     * updateNotes — updates the session-level notes string.
+     */
+    const updateNotes = useCallback((value) => {
+        _setActiveSession(prev => ({ ...prev, notes: value }))
+    }, [])
+
+    /**
+     * resetActiveSession — rebuilds a fresh empty session for the current day.
+     */
+    const resetActiveSession = useCallback(() => {
+        _setActiveSession(prev => buildEmptySession(prev.blockId, prev.dayNumber))
+    }, [])
+
+    // ── Settings load on mount ────────────────────────────────────────────────
     useEffect(() => {
         async function init() {
-            const p = await getSetting('currentPhase')
-            _setPhase(Number(p) || 1)
-
             _setAppName(await getSetting('appName'))
             _setAppSubtitle(await getSetting('appSubtitle'))
             _setDailyIgnitionEnabled(await getSetting('dailyIgnitionEnabled'))
-            
+
+            const block = await getSetting('currentBlock')
+            if (block) _setCurrentBlock(block)
+
             const bookmarks = await getSetting('bookmarkedIgnitions')
             if (Array.isArray(bookmarks)) setBookmarkedIgnitions(bookmarks)
-            
+
             const setups = await getSetting('savedRoundsTimers')
-            if (Array.isArray(setups)) {
-                setSavedRoundsSetups(setups)
-            }
+            if (Array.isArray(setups)) setSavedRoundsSetups(setups)
 
             await refreshCounts()
             await refreshPending()
@@ -357,13 +353,10 @@ export function DBProvider({ children }) {
 
     const refreshCounts = useCallback(async () => {
         const sessions = await db.sessions.toArray()
-        const counts = { 1: 0, 2: 0, 3: 0 }
+        const counts = {}
         for (const s of sessions) {
-            // Only count S&C days (not fight gym days 2 and 4)
-            if (s.day !== 2 && s.day !== 4) {
-                const p = Number(s.phase)
-                if (counts[p] !== undefined) counts[p]++
-            }
+            const b = s.blockId || 'phase1'
+            counts[b] = (counts[b] || 0) + 1
         }
         setCount(counts)
     }, [])
@@ -373,9 +366,9 @@ export function DBProvider({ children }) {
         setPending(n)
     }, [])
 
-    const setPhase = useCallback(async (p) => {
-        await setSetting('currentPhase', p)
-        _setPhase(p)
+    const setCurrentBlock = useCallback(async (block) => {
+        await setSetting('currentBlock', block)
+        _setCurrentBlock(block)
     }, [])
 
     const setAppName = useCallback(async (name) => {
@@ -395,33 +388,47 @@ export function DBProvider({ children }) {
 
     const toggleIgnitionBookmark = useCallback(async (id) => {
         setBookmarkedIgnitions(prev => {
-            const newBookmarks = prev.includes(id) ? prev.filter(b => b !== id) : [...prev, id];
-            setSetting('bookmarkedIgnitions', newBookmarks).catch(console.error);
-            return newBookmarks;
-        });
-    }, []);
+            const newBookmarks = prev.includes(id) ? prev.filter(b => b !== id) : [...prev, id]
+            setSetting('bookmarkedIgnitions', newBookmarks).catch(console.error)
+            return newBookmarks
+        })
+    }, [])
 
-    const logSession = useCallback(async (sessionData) => {
-        const id = await db.sessions.add(sessionData)
-        await db.syncQueue.add({ sessionId: id, attempts: 0, payload: sessionData })
+    /**
+     * logSession — builds the apex_session payload, saves to Dexie, queues for sync.
+     *
+     * @param {Object} sessionPayload — the fully constructed apex_session envelope
+     */
+    const logSession = useCallback(async (sessionPayload) => {
+        // Save minimal record to local sessions table for Calendar display
+        const localRecord = {
+            date: sessionPayload.meta.date,
+            blockId: sessionPayload.meta.blockId,
+            dayNumber: sessionPayload.meta.dayNumber,
+            focus: sessionPayload.meta.focus,
+            notes: sessionPayload.meta.notes,
+            sessionId: sessionPayload.meta.sessionId,
+            rowCount: sessionPayload.rows.length
+        }
+
+        const id = await db.sessions.add(localRecord)
+        await db.syncQueue.add({ sessionId: id, attempts: 0, payload: sessionPayload })
         await refreshCounts()
         await refreshPending()
-        // Reset in-progress workout state after successful log
-        resetActiveWorkout()
-        // Attempt to sync immediately if online
-        trySyncQueue(refreshPending)
-    }, [refreshCounts, refreshPending, resetActiveWorkout])
 
-    const resetSession = useCallback(() => {
-        resetActiveWorkout()
-    }, [resetActiveWorkout])
+        // Reset in-progress session state
+        resetActiveSession()
+
+        // Attempt immediate sync
+        trySyncQueue(refreshPending)
+    }, [refreshCounts, refreshPending, resetActiveSession])
 
     if (!ready) {
         return (
             <div className="app" style={{ justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
                 <div style={{ textAlign: 'center', color: 'var(--dim)' }}>
-                    <div style={{ fontSize: '2rem', marginBottom: 8 }}>⚔️</div>
-                    <div>Loading Fighter's OS…</div>
+                    <div style={{ fontSize: '2rem', marginBottom: 8 }}>🏋️</div>
+                    <div>Loading APEX PROTOCOL…</div>
                 </div>
             </div>
         )
@@ -429,39 +436,30 @@ export function DBProvider({ children }) {
 
     return (
         <DBContext.Provider value={{
-            // ── DB-backed settings ──
-            phase, setPhase,
+            // ── App settings ──
             appName, setAppName,
             appSubtitle, setAppSubtitle,
             dailyIgnitionEnabled, setDailyIgnitionEnabled,
             bookmarkedIgnitions, toggleIgnitionBookmark,
             ignitionHasShown, setIgnitionHasShown,
-            sessionCount, pendingSync, logSession, resetSession,
+            currentBlock, setCurrentBlock,
+
+            // ── Session tracking ──
+            sessionCount, pendingSync, logSession,
             refreshCounts, refreshPending,
 
-            // ── Active workout state ──
-            day, setDay,
-            hipScore, setHipScore,
-            mobChecked, toggleMobilityCheck,
-            strSets, updateStrengthSet,
-            coreSets, updateCoreSet,
-            clrChecked, toggleCooldownCheck,
-            bagRounds, setBagRounds,
-            bagCourse, setBagCourse,
-            bagModules, setBagModules,
-            bagWorkouts, setBagWorkouts,
-            notes, setNotes,
-            gymSessionType, setGymSessionType,
-            altRows, setAltRows, addAltRow, updateAltRow, removeAltRow,
-            altDuration, setAltDuration,
-            hudScrollY, setHudScrollY,
-            resetActiveWorkout,
+            // ── Active session state ──
+            activeSession,
+            selectDay,
+            updateSet,
+            updateNotes,
+            resetActiveSession,
 
             // ── Timer state ──
             swTime, swRunning, toggleStopwatch, resetStopwatch,
             cdTime, cdRunning, startCountdown, toggleCountdown, cancelCountdown, addCountdownTime,
             alertState,
-            
+
             // ── Custom Rounds Timer ──
             roundsTimer,
             savedRoundsSetups, saveRoundsSetup, deleteRoundsSetup
@@ -481,23 +479,25 @@ export function useDB() {
 
 const MAX_ATTEMPTS = 5
 
+/**
+ * trySyncQueue — drains pending apex_session payloads to WEBHOOK_URL.
+ * Uses no-cors mode for cross-origin Google Apps Script requests.
+ */
 export async function trySyncQueue(onComplete) {
     if (!navigator.onLine) return
-    const webhookUrl = await getSetting('webhookUrl')
-    if (!webhookUrl) return  // webhook not configured yet
 
     const pending = await db.syncQueue.toArray()
     for (const item of pending) {
         if (item.attempts >= MAX_ATTEMPTS) continue
         try {
-            const res = await fetch(webhookUrl, {
+            const res = await fetch(WEBHOOK_URL, {
                 method: 'POST',
                 mode: 'no-cors',
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                 body: JSON.stringify(item.payload)
             })
-            // no-cors returns an opaque response (type: 'opaque', res.ok is false, status is 0)
-            // If we don't hit the catch block, the request was successfully sent.
+            // no-cors → opaque response (status 0, res.type === 'opaque')
+            // No error thrown = request was dispatched successfully
             if (res.type === 'opaque' || res.ok) {
                 await db.syncQueue.delete(item.id)
             } else {
