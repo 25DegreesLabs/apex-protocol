@@ -14,37 +14,20 @@
  * Plan data: useApexPlaybook → plan-phase1.json
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
-import { useDB } from '../db/index.jsx'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { db, useDB } from '../db/index.jsx'
 import { getDay } from '../hooks/useApexPlaybook.js'
 import ExerciseBlock from './ExerciseBlock.jsx'
 
 // ─── Day selector options (7-day week) ───────────────────────────────────────
 const DAY_OPTIONS = [1, 2, 3, 4, 5, 6, 7]
 
-// ─── Payload builder ──────────────────────────────────────────────────────────
+// ─── Payload builders ────────────────────────────────────────────────────────
 /**
- * buildApexPayload — constructs the apex_session envelope ready for the webhook.
+ * buildApexPayload — constructs the apex_session envelope for a TRAINING day.
  *
- * Output conforms exactly to the Outbound Logging Payload Contract in schema-spec.md.
- * Each rows[] entry maps to one row in the WorkoutLog Google Sheet.
- *
- * WorkoutLog column mapping:
- *   Date            → meta.date
- *   Block           → meta.blockId
- *   Day             → meta.dayNumber
- *   ExercisePlanId  → exercise.exerciseId
- *   ExerciseName    → exercise.exerciseName
- *   Target          → exercise.target
- *   SupersetLabel   → exercise.supersetLabel
- *   PrescribedSets  → exercise.prescribedSets
- *   PrescribedReps  → exercise.prescribedReps
- *   PrescribedRpe   → exercise.prescribedRpe
- *   SetNumber       → set.setNumber
- *   Load (kg)       → set.load
- *   RepsCompleted   → set.reps
- *   RpeLogged       → set.rpe
- *   Notes           → meta.notes (repeated on each row)
+ * sessionType is 'training' and is included in both meta and every row.
+ * Existing one-row-per-set model is preserved exactly.
  */
 function buildApexPayload(activeSession) {
     const { blockId, dayNumber, date, notes, exercises } = activeSession
@@ -59,6 +42,7 @@ function buildApexPayload(activeSession) {
                 date,
                 block: blockId,
                 day: dayNumber,
+                sessionType: 'training',
                 exercisePlanId: exercise.exerciseId,
                 exerciseName: exercise.exerciseName,
                 target: exercise.target,
@@ -83,10 +67,56 @@ function buildApexPayload(activeSession) {
             date,
             blockId,
             dayNumber,
+            sessionType: 'training',
             focus: activeSession.focus,
             notes
         },
         rows
+    }
+}
+
+/**
+ * buildRestPayload — constructs the apex_session envelope for a REST or RECOVERY day.
+ *
+ * Emits exactly ONE meta-only row with no exercise/set/load/reps data.
+ * sessionType is 'rest' or 'recovery' as determined by the plan.
+ */
+function buildRestPayload(activeSession, sessionType) {
+    const { blockId, dayNumber, date, notes } = activeSession
+    const sessionId = `${date}-${blockId}-d${dayNumber}-${Date.now()}`
+
+    return {
+        type: 'apex_session',
+        version: '1',
+        meta: {
+            sessionId,
+            date,
+            blockId,
+            dayNumber,
+            sessionType,            // 'rest' | 'recovery'
+            focus: activeSession.focus ?? '',
+            notes
+        },
+        rows: [
+            {
+                date,
+                block: blockId,
+                day: dayNumber,
+                sessionType,
+                exercisePlanId: null,
+                exerciseName: null,
+                target: null,
+                supersetLabel: null,
+                prescribedSets: null,
+                prescribedReps: null,
+                prescribedRpe: null,
+                setNumber: null,
+                load: null,
+                repsCompleted: null,
+                rpeLogged: null,
+                notes
+            }
+        ]
     }
 }
 
@@ -104,6 +134,7 @@ export default function HUD() {
         updateNotes,
         resetActiveSession,
         pendingSync,
+        sessionCount,
         logSession
     } = useDB()
 
@@ -112,7 +143,10 @@ export default function HUD() {
     // ── Warmup display (read from plan, not session state) ────────────────────
     const dayPlan = getDay(blockId, dayNumber)
     const warmup = dayPlan?.warmup ?? []
-    const isRestDay = !dayPlan || !Array.isArray(dayPlan.exercises) || dayPlan.exercises.length === 0
+    const dayType = dayPlan?.dayType ?? 'training'
+    const isRest = dayType === 'rest'
+    const isRecovery = dayType === 'recovery'
+    const isRestDay = isRest || isRecovery  // kept for guard clauses below
 
     // ── Scroll restoration ────────────────────────────────────────────────────
     const scrollRef = useRef(_savedScrollY)
@@ -139,6 +173,55 @@ export default function HUD() {
         }
     }, [])
 
+    // ── Progress summary ──────────────────────────────────────────────────────
+    const [progressSummary, setProgressSummary] = useState({ week: "Week 1 / 8", action: "Start on Day 1" })
+
+    useEffect(() => {
+        async function loadProgress() {
+            try {
+                const count = sessionCount[blockId] || 0
+                if (count === 0) {
+                    setProgressSummary({ week: "Week 1 / 8", action: "Start on Day 1" })
+                    return
+                }
+                const weekNumber = Math.ceil(count / 4)
+                const lastSession = await db.sessions.orderBy('id').reverse().limit(1).first()
+                
+                if (lastSession) {
+                    let nextDay = lastSession.dayNumber + 1
+                    if (nextDay > 7) nextDay = 1
+                    
+                    let safety = 0
+                    while (safety < 7) {
+                        const plan = getDay(blockId, nextDay)
+                        if (plan && plan.dayType === 'training') break
+                        nextDay++
+                        if (nextDay > 7) nextDay = 1
+                        safety++
+                    }
+                    setProgressSummary({ week: `Week ${weekNumber} / 8`, action: `Next: Day ${nextDay}` })
+                }
+            } catch (err) {
+                console.error(err)
+            }
+        }
+        loadProgress()
+    }, [blockId, sessionCount])
+
+    // ── Sets completeness ─────────────────────────────────────────────────────
+    let totalPlannedSets = 0
+    let loggedSets = 0
+    if (!isRestDay && exercises) {
+        for (const ex of exercises) {
+            totalPlannedSets += ex.prescribedSets || 0
+            for (const set of ex.sets) {
+                if (set.load !== '' || set.reps !== '' || set.rpe !== '') {
+                    loggedSets += 1
+                }
+            }
+        }
+    }
+
     // ── Day change ────────────────────────────────────────────────────────────
     const handleDayChange = useCallback((newDay) => {
         selectDay(blockId, Number(newDay))
@@ -155,7 +238,12 @@ export default function HUD() {
     // ── Log ───────────────────────────────────────────────────────────────────
     const handleLog = useCallback(async () => {
         if (isRestDay) {
-            alert('This is a rest day — nothing to log.')
+            // Rest/recovery days emit a single meta-only row
+            const sessionType = dayType  // 'rest' | 'recovery'
+            const payload = buildRestPayload(activeSession, sessionType)
+            await logSession(payload)
+            const label = sessionType === 'recovery' ? 'Recovery day' : 'Rest day'
+            alert(`✅ ${label} logged!\nDay ${dayNumber} confirmed.`)
             return
         }
 
@@ -170,7 +258,7 @@ export default function HUD() {
         const payload = buildApexPayload(activeSession)
         await logSession(payload)
         alert(`✅ Session logged!\nDay ${dayNumber} — ${focus || blockId}\n${payload.rows.length} set(s) sent to Google Sheets.`)
-    }, [activeSession, isRestDay, exercises, notes, focus, blockId, dayNumber, logSession])
+    }, [activeSession, isRestDay, dayType, exercises, notes, focus, blockId, dayNumber, logSession])
 
     // ─── Group exercises by superset for display ──────────────────────────────
     // Exercises with the same non-null supersetLabel are shown as a group.
@@ -240,24 +328,86 @@ export default function HUD() {
 
             <main className="content">
                 {/* ── Day selector ────────────────────────────────── */}
-                <div className="selector-row">
+                <div className="selector-row" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                    {/* Primary Control */}
                     <div className="selector-group">
-                        <label>Day</label>
-                        <select value={dayNumber} onChange={e => handleDayChange(e.target.value)}>
+                        <label style={{ color: 'var(--primary)' }}>Step 1 · Day</label>
+                        <select 
+                            value={dayNumber} 
+                            onChange={e => handleDayChange(e.target.value)}
+                            style={{
+                                borderColor: 'var(--primary)',
+                                background: 'rgba(0, 255, 102, 0.05)',
+                                color: 'var(--text)',
+                                fontWeight: 700,
+                                boxShadow: '0 0 10px rgba(0, 255, 102, 0.05)'
+                            }}
+                        >
                             {DAY_OPTIONS.map(d => (
                                 <option key={d} value={d}>Day {d}</option>
                             ))}
                         </select>
                     </div>
+                    
+                    {/* Secondary Control */}
                     <div className="selector-group">
-                        <label>Block</label>
-                        <select value={blockId} disabled>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                            <label style={{ marginBottom: 0, color: 'var(--dim)' }}>Block</label>
+                            <span style={{ fontSize: '0.6rem', color: 'var(--dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>🔒 Active</span>
+                        </div>
+                        <select 
+                            value={blockId} 
+                            disabled
+                            style={{
+                                borderColor: 'var(--divider)',
+                                color: 'var(--dim)',
+                                background: 'transparent',
+                                opacity: 0.8
+                            }}
+                        >
                             <option value="phase1">Phase 1</option>
                         </select>
                     </div>
+
+                    {/* ── Progress Summary ───────────────────────────── */}
+                    <div style={{
+                        gridColumn: '1 / -1',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 10,
+                        marginTop: 4
+                    }}>
+                        <span style={{
+                            fontSize: '0.75rem',
+                            color: 'var(--dim)',
+                            fontWeight: 700,
+                            letterSpacing: '0.05em',
+                            textTransform: 'uppercase'
+                        }}>
+                            {progressSummary.week}
+                        </span>
+                        
+                        <span style={{
+                            background: 'rgba(0, 255, 102, 0.1)',
+                            border: '1px solid var(--primary)',
+                            color: 'var(--primary)',
+                            padding: '4px 10px',
+                            borderRadius: '4px',
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            letterSpacing: '0.05em',
+                            textTransform: 'uppercase',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 4
+                        }}>
+                            ▶ {progressSummary.action}
+                        </span>
+                    </div>
                 </div>
 
-                {/* ── Focus label ──────────────────────────────────── */}
+                {/* ── Focus label (training days only) ─────────────── */}
                 {focus && !isRestDay && (
                     <div style={{
                         textAlign: 'center',
@@ -271,15 +421,84 @@ export default function HUD() {
                     </div>
                 )}
 
-                {/* ── Rest day notice ──────────────────────────────── */}
-                {isRestDay && (
-                    <div className="card" style={{ textAlign: 'center', padding: 28 }}>
-                        <div style={{ fontSize: '2rem', marginBottom: 8 }}>😴</div>
-                        <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 6 }}>
-                            {dayPlan?.focus ?? 'Rest Day'}
+                {/* ── Descanso completo ─────────────────────────────── */}
+                {isRest && (
+                    <div className="card" style={{ padding: '20px 18px 22px 18px' }}>
+                        <div style={{ fontSize: '2rem', marginBottom: 6, textAlign: 'center' }}>🛌</div>
+                        <div style={{
+                            fontWeight: 800,
+                            fontSize: '1.1rem',
+                            textAlign: 'center',
+                            marginBottom: 12,
+                            color: 'var(--text)'
+                        }}>
+                            Rest Day
                         </div>
-                        <div style={{ color: 'var(--dim)', fontSize: '0.85rem' }}>
-                            No exercises scheduled. Take the recovery seriously.
+                        <div style={{
+                            fontSize: '0.85rem',
+                            color: 'var(--dim)',
+                            lineHeight: 1.6
+                        }}>
+                            <p style={{ margin: '0 0 8px 0' }}>
+                                Recover right. That’s the work today.
+                            </p>
+                            <div style={{ borderTop: '1px solid var(--divider)', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <div>→ Walk 20–30 min if the body wants it.</div>
+                                <div>→ Stretch the muscles you hit.</div>
+                                <div>→ Hydrate. Sleep hard.</div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* ── Recuperación activa ───────────────────────────── */}
+                {isRecovery && (
+                    <div className="card" style={{ padding: '20px 18px 22px 18px' }}>
+                        <div style={{
+                            fontWeight: 800,
+                            fontSize: '1.2rem',
+                            textAlign: 'center',
+                            marginBottom: 16,
+                            color: 'var(--text)',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em'
+                        }}>
+                            Move. Recover. Stay ready.
+                        </div>
+                        <div style={{
+                            fontSize: '0.9rem',
+                            color: 'var(--text)',
+                            lineHeight: 1.7,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 12
+                        }}>
+                            <div style={{
+                                background: 'rgba(255,255,255,0.04)',
+                                borderRadius: 8,
+                                padding: '14px 16px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 8
+                            }}>
+                                <div>🥾 Walk 45–60 min.</div>
+                                <div>🏀 Play something. Basketball, swim, football, MMA.</div>
+                                <div>🧘‍♂️ Do 20–30 min mobility.</div>
+                                <div>🏃‍♂️ Easy run.</div>
+                                <div>🧘‍♀️ Active meditation.</div>
+                            </div>
+                            <div style={{
+                                fontSize: '0.85rem',
+                                color: 'var(--dim)',
+                                textAlign: 'center',
+                                marginTop: 4,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 2
+                            }}>
+                                <div style={{ fontWeight: 700, color: 'var(--text)' }}>💧 Hydrate. 😴 Sleep hard. 🔄 Reset.</div>
+                                <div style={{ fontStyle: 'italic', opacity: 0.8 }}>Goal: keep the body moving without draining it.</div>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -345,8 +564,24 @@ export default function HUD() {
                 )}
 
                 {/* ── Actions ──────────────────────────────────────── */}
-                {!isRestDay && (
+                {isRestDay ? (
                     <div className="actions-bar">
+                        <button className="btn-primary" onClick={handleLog}>
+                            ✔ CONFIRM DAY DONE
+                        </button>
+                    </div>
+                ) : (
+                    <div className="actions-bar">
+                        <div style={{
+                            textAlign: 'center',
+                            fontSize: '0.85rem',
+                            color: loggedSets >= totalPlannedSets && totalPlannedSets > 0 ? 'var(--green)' : 'var(--dim)',
+                            marginBottom: 12,
+                            fontWeight: 600,
+                            letterSpacing: '0.02em'
+                        }}>
+                            {loggedSets} / {totalPlannedSets} sets completados
+                        </div>
                         <button className="btn-primary" onClick={handleLog}>▶ LOG SESSION</button>
                         <button className="btn-secondary" onClick={handleReset}>↺ RESET HUD</button>
                     </div>

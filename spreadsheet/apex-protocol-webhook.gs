@@ -61,7 +61,8 @@ var SHEET_NAME_LOG      = 'WorkoutLog';
 var PAYLOAD_TYPE        = 'apex_session';
 var PAYLOAD_VERSION     = '1';
 
-// Column order for WorkoutLog — must stay in sync with README-deploy.md
+// Column order for WorkoutLog — must stay in sync with schema-spec.md
+// Column 16 (SessionType) appended in v1.1 — June 2026.
 var COLUMNS = [
   'date',
   'block',
@@ -77,7 +78,10 @@ var COLUMNS = [
   'load',
   'repsCompleted',
   'rpeLogged',
-  'notes'
+  'notes',
+  'sessionType',    // col P — 'training' | 'rest' | 'recovery'
+  'sessionId',      // col Q — 'date-block-day-timestamp'
+  'status'          // col R — 'active' | 'cancelled'
 ];
 
 // ── Main webhook handler ──────────────────────────────────────────────────────
@@ -92,7 +96,15 @@ function doPost(e) {
     var raw     = e.postData && e.postData.contents ? e.postData.contents : '';
     var payload = JSON.parse(raw);
 
-    // 2. Validate type + version
+    // 2. Handle delete action
+    if (payload.action === 'delete') {
+      if (!payload.sessionId) {
+        return jsonResponse({ ok: false, error: 'Missing sessionId for delete action.' });
+      }
+      return handleDelete(payload.sessionId);
+    }
+
+    // 3. Validate type + version
     if (payload.type !== PAYLOAD_TYPE) {
       return jsonResponse({ ok: false, error: 'Unknown payload type: ' + payload.type });
     }
@@ -101,8 +113,13 @@ function doPost(e) {
     }
 
     // 3. Validate rows array
+    // Training sessions must have at least one row; rest/recovery send exactly one meta row.
+    var metaSessionType = (payload.meta && payload.meta.sessionType) ? payload.meta.sessionType : 'training';
     if (!Array.isArray(payload.rows) || payload.rows.length === 0) {
-      return jsonResponse({ ok: false, error: 'No rows in payload.' });
+      if (metaSessionType === 'training') {
+        return jsonResponse({ ok: false, error: 'No rows in payload.' });
+      }
+      return jsonResponse({ ok: true, appended: 0, skipped: 0, note: 'Non-training day confirmed, no rows to write.' });
     }
 
     // 4. Get sheet
@@ -118,12 +135,17 @@ function doPost(e) {
     // 6. Process rows — filter incomplete sets, append valid ones
     var appended = 0;
     var skipped  = 0;
+    var sessionId = payload.meta && payload.meta.sessionId ? payload.meta.sessionId : '';
 
     payload.rows.forEach(function(row) {
       if (!isRowComplete(row)) {
         skipped++;
         return;
       }
+      // Inject sessionId and status
+      row.sessionId = sessionId;
+      row.status = 'active';
+
       var sheetRow = buildSheetRow(row);
       log.appendRow(sheetRow);
 
@@ -145,17 +167,53 @@ function doPost(e) {
   }
 }
 
+// ── Delete handler ────────────────────────────────────────────────────────────
+
+/**
+ * handleDelete — sets Status = 'cancelled' for all rows matching the given sessionId.
+ */
+function handleDelete(sessionId) {
+  var ss  = SpreadsheetApp.getActiveSpreadsheet();
+  var log = ss.getSheetByName(SHEET_NAME_LOG);
+  if (!log) {
+    return jsonResponse({ ok: false, error: 'Sheet not found: ' + SHEET_NAME_LOG });
+  }
+
+  var data = log.getDataRange().getValues();
+  var headers = data[0];
+  var sessionIdIndex = headers.indexOf('SessionId');
+  var statusIndex = headers.indexOf('Status');
+
+  if (sessionIdIndex === -1 || statusIndex === -1) {
+    return jsonResponse({ ok: false, error: 'Sheet is missing SessionId or Status columns.' });
+  }
+
+  var cancelledCount = 0;
+
+  // data[0] is headers, so start from 1.
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][sessionIdIndex] === sessionId) {
+      // i + 1 because range rows are 1-indexed
+      log.getRange(i + 1, statusIndex + 1).setValue('cancelled');
+      cancelledCount++;
+    }
+  }
+
+  return jsonResponse({ ok: true, cancelled: cancelledCount, message: 'Session cancelled.' });
+}
+
 // ── Row validation ────────────────────────────────────────────────────────────
 
 /**
- * A row is considered complete when it has:
- * - An exercise plan id
- * - A set number
- * - At least one of: load, repsCompleted (partial efforts still count)
+ * isRowComplete — returns true when a row should be written to the sheet.
  *
- * Rows with no load AND no reps are silently skipped.
+ * REST/RECOVERY rows: always accepted (sessionType present, no exercise data required).
+ * TRAINING rows: require exercisePlanId + setNumber + at least load or repsCompleted.
  */
 function isRowComplete(row) {
+  // Non-training rows bypass exercise-data requirements
+  if (row.sessionType === 'rest' || row.sessionType === 'recovery') return true;
+
   if (!row.exercisePlanId)          return false;
   if (!row.setNumber)               return false;
   var hasLoad = row.load !== null && row.load !== '' && row.load !== undefined;
@@ -198,7 +256,10 @@ var HEADERS = [
   'Load (kg)',
   'RepsCompleted',
   'RpeLogged',
-  'Notes'
+  'Notes',
+  'SessionType',    // col P
+  'SessionId',      // col Q
+  'Status'          // col R
 ];
 
 function ensureHeaders(sheet) {

@@ -20,13 +20,20 @@ import useRoundsTimer from '../hooks/useRoundsTimer.js'
 import { getDay } from '../hooks/useApexPlaybook.js'
 
 // ─── Webhook URL — hardcoded constant, never user-editable ─────────────────────
-export const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbxZqYHO-K0sr_7hyhngon31nqMSBvylbKN6kJIUPgxwozJoHWOIwA96d1H86ulqm-tJ/exec'
+export const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbzbox-9wQWentKHoS9n0xaMcxi7RoJGd4ivbQYzAdMxhVXELy1Mwl_rtImwzKW1aWaH/exec'
 
 // ─── Database definition ──────────────────────────────────────────────────────
 const db = new Dexie('ApexProtocol')
 
 db.version(1).stores({
     sessions: '++id, date, dayNumber, blockId',
+    syncQueue: '++id, sessionId, attempts',
+    settings: 'key'
+})
+
+// version 2 — adds sessionType index for training-only counts
+db.version(2).stores({
+    sessions: '++id, date, dayNumber, blockId, sessionType',
     syncQueue: '++id, sessionId, attempts',
     settings: 'key'
 })
@@ -352,9 +359,14 @@ export function DBProvider({ children }) {
     }, [])
 
     const refreshCounts = useCallback(async () => {
+        // Count only training sessions — rest/recovery days must not inflate the week number.
+        // Old rows without sessionType (logged before this change) are treated as training
+        // via the fallback: undefined !== 'rest' && undefined !== 'recovery'.
         const sessions = await db.sessions.toArray()
         const counts = {}
         for (const s of sessions) {
+            const isTraining = !s.sessionType || s.sessionType === 'training'
+            if (!isTraining) continue
             const b = s.blockId || 'phase1'
             counts[b] = (counts[b] || 0) + 1
         }
@@ -405,6 +417,7 @@ export function DBProvider({ children }) {
             date: sessionPayload.meta.date,
             blockId: sessionPayload.meta.blockId,
             dayNumber: sessionPayload.meta.dayNumber,
+            sessionType: sessionPayload.meta.sessionType,   // 'training' | 'rest' | 'recovery'
             focus: sessionPayload.meta.focus,
             notes: sessionPayload.meta.notes,
             sessionId: sessionPayload.meta.sessionId,
@@ -422,6 +435,44 @@ export function DBProvider({ children }) {
         // Attempt immediate sync
         trySyncQueue(refreshPending)
     }, [refreshCounts, refreshPending, resetActiveSession])
+
+    /**
+     * deleteLastSession — finds the last logged session, calls webhook to soft delete rows,
+     * removes it from local Dexie, and refreshes counts.
+     */
+    const deleteLastSession = useCallback(async () => {
+        const lastSession = await db.sessions.orderBy('id').reverse().limit(1).first()
+        if (!lastSession) {
+            alert('No recent session found to delete.')
+            return false
+        }
+        
+        try {
+            // Best effort to remove any pending syncs for this session first
+            await db.syncQueue.where('sessionId').equals(lastSession.id).delete()
+            
+            // Soft delete via webhook
+            if (navigator.onLine) {
+                const res = await fetch(WEBHOOK_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({ action: 'delete', sessionId: lastSession.sessionId })
+                })
+                // We assume opaque response is sent properly. 
+                // A more robust app would queue deletes if offline, but for this pilot best-effort is fine.
+            }
+            
+            await db.sessions.delete(lastSession.id)
+            await refreshCounts()
+            await refreshPending()
+            return true
+        } catch (err) {
+            console.error('Failed to delete last session:', err)
+            alert('Failed to connect to webhook. Session was not deleted.')
+            return false
+        }
+    }, [refreshCounts, refreshPending])
 
     if (!ready) {
         return (
@@ -445,7 +496,7 @@ export function DBProvider({ children }) {
             currentBlock, setCurrentBlock,
 
             // ── Session tracking ──
-            sessionCount, pendingSync, logSession,
+            sessionCount, pendingSync, logSession, deleteLastSession,
             refreshCounts, refreshPending,
 
             // ── Active session state ──

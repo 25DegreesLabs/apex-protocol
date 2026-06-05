@@ -100,7 +100,7 @@ When the user taps "Log Session", the app must construct a flat, set-based array
 ---
 
 ### 6. WorkoutLog Google Sheet Schema
-The deployed Google Sheet has exactly 15 permanent columns. The Apps Script matches JSON payload keys to these exact headers.
+The deployed Google Sheet has 18 permanent columns. The Apps Script matches JSON payload keys to these exact headers.
 
 1. `Date`
 2. `Block`
@@ -117,6 +117,9 @@ The deployed Google Sheet has exactly 15 permanent columns. The Apps Script matc
 13. `RepsCompleted`
 14. `RpeLogged`
 15. `Notes`
+16. `SessionType` ← **Added June 2026.** Values: `training` | `rest` | `recovery`.
+17. `SessionId` ← **Added June 2026.** Unique ID for grouping rows of a single session. Used for soft deletion.
+18. `Status` ← **Added June 2026.** Values: `active` | `cancelled`. Soft delete flag.
 
 ---
 
